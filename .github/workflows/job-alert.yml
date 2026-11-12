@@ -1,0 +1,60 @@
+name: JobThai Alert
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  check-jobthai:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install required packages
+        run: pip install -r requirements.txt
+
+      - name: Check JobThai
+        run: python check_jobthai.py
+
+      - name: Send email through Apps Script
+        if: ${{ hashFiles('message.html') != '' }}
+        env:
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          message = Path("message.html").read_text(encoding="utf-8")
+          Path("payload.json").write_text(
+              json.dumps({"message": message}, ensure_ascii=False),
+              encoding="utf-8"
+          )
+          PY
+
+          curl --fail-with-body \
+            --location \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --data-binary "@payload.json" \
+            "$APPS_SCRIPT_URL"
+
+      - name: Save latest job data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add jobs.json
+          git diff --cached --quiet || git commit -m "Update JobThai job data"
+          git push
