@@ -10,24 +10,26 @@ on:
         default: false
 
   schedule:
-    # ตรวจทุก 1 ชั่วโมง เวลาเป็น UTC
+    # ตรวจทุก 1 ชั่วโมง โดย GitHub Actions ใช้เวลา UTC
     - cron: "0 * * * *"
 
 permissions:
   contents: write
-*concurrency:
-  group: jobthai-aler*
+
+concurrency:
+  group: jobthai-alert
   cancel-in-progress: false
 
-jobs*
+jobs:
   check-jobthai:
-    runs-on: ubu*tu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-*    steps:
-      - name: Checkout *epository
-        uses: actions/ch*ckout@v4
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          r*f: main
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -38,7 +40,7 @@ jobs*
       - name: Install required packages
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install -r requirements.txt
 
       - name: Check JobThai
         env:
@@ -78,9 +80,9 @@ jobs*
               ;;
             *)
               echo "ERROR: APPS_SCRIPT_URL has an incorrect format"
-              echo "The URL must begin with:"
+              echo "URL must start with:"
               echo "https://script.google.com/macros/s/"
-              echo "and end with /exec"
+              echo "and must end with /exec"
               exit 1
               ;;
           esac
@@ -92,9 +94,7 @@ jobs*
           import json
           from pathlib import Path
 
-          message = Path(
-              "message.html"
-          ).read_text(
+          message = Path("message.html").read_text(
               encoding="utf-8"
           )
 
@@ -157,41 +157,26 @@ jobs*
           import sys
           from pathlib import Path
 
-          response_file = Path(
-              "apps-script-response.txt"
-          )
+          response_file = Path("apps-script-response.txt")
 
           if not response_file.exists():
-              print(
-                  "ERROR: Apps Script response file "
-                  "was not created"
-              )
+              print("ERROR: Apps Script response file was not created")
               sys.exit(1)
 
           response_text = response_file.read_text(
               encoding="utf-8"
           ).strip()
 
-          print(
-              "Response length:",
-              len(response_text),
-          )
+          print("Response length:", len(response_text))
 
           if not response_text:
-              print(
-                  "ERROR: Apps Script returned "
-                  "an empty response"
-              )
+              print("ERROR: Apps Script returned an empty response")
               sys.exit(1)
 
           try:
               response = json.loads(response_text)
-
           except json.JSONDecodeError as error:
-              print(
-                  "ERROR: Apps Script did not "
-                  "return valid JSON"
-              )
+              print("ERROR: Apps Script did not return valid JSON")
               print("Details:", error)
               print("Response:", response_text[:1000])
               sys.exit(1)
@@ -199,41 +184,27 @@ jobs*
           if response.get("ok") is not True:
               print(
                   "ERROR from Apps Script:",
-                  response.get(
-                      "error",
-                      "Unknown error",
-                  ),
+                  response.get("error", "Unknown error"),
               )
               sys.exit(1)
 
           print("Email sent successfully")
           print(
               "Apps Script message:",
-              response.get(
-                  "message",
-                  "Email sent",
-              ),
+              response.get("message", "Email sent"),
           )
           PY
 
       - name: Save latest job data
-        if: >-
-          ${{
-            github.event_name != 'workflow_dispatch' ||
-            inputs.force_test != true
-          }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.force_test != true }}
         run: |
           if [ ! -f jobs.json ]; then
             echo "ERROR: jobs.json was not created"
             exit 1
           fi
 
-          git config \
-            user.name \
-            "github-actions[bot]"
-
-          git config \
-            user.email \
+          git config user.name "github-actions[bot]"
+          git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add jobs.json
@@ -241,8 +212,6 @@ jobs*
           if git diff --cached --quiet; then
             echo "No changes to jobs.json"
           else
-            git commit \
-              -m "Update JobThai job data"
-
+            git commit -m "Update JobThai job data"
             git push origin main
           fi
