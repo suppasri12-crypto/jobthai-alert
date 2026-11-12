@@ -2,59 +2,182 @@ name: JobThai Alert
 
 on:
   workflow_dispatch:
+    inputs:
+      force_test:
+        description: "ส่งอีเมลทดสอบทันที"
+        required: true
+        type: boolean
+        default: false
 
   schedule:
+    # ตรวจทุก 1 ชั่วโมง
+    # GitHub Actions ใช้เวลา UTC
     - cron: "0 * * * *"
 
 permissions:
   contents: write
 
+concurrency:
+  group: jobthai-alert
+  cancel-in-progress: false
+
 jobs:
   check-jobthai:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install required packages
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Check JobThai
-        run: python check_jobthai.py
+        env:
+          FORCE_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.force_test || 'false' }}
+        run: |
+          python check_jobthai.py
 
-      - name: Send email through Apps Script
+      - name: Show detection result
+        run: |
+          echo "Files after checking:"
+          ls -la
+
+          if [ -f message.html ]; then
+            echo "EMAIL_MESSAGE_CREATED=true"
+            echo "Message size:"
+            wc -c message.html
+          else
+            echo "EMAIL_MESSAGE_CREATED=false"
+            echo "No new job email will be sent."
+          fi
+
+      - name: Verify Apps Script secret
         if: ${{ hashFiles('message.html') != '' }}
         env:
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+        run: |
+          if [ -z "$APPS_SCRIPT_URL" ]; then
+            echo "ERROR: APPS_SCRIPT_URL is missing"
+            echo "Create it at Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+          case "$APPS_SCRIPT_URL" in
+            https://script.google.com/macros/s/*/exec)
+              echo "APPS_SCRIPT_URL format looks correct"
+              ;;
+            *)
+              echo "ERROR: APPS_SCRIPT_URL must end with /exec"
+              exit 1
+              ;;
+          esac
+
+      - name: Create JSON payload
+        if: ${{ hashFiles('message.html') != '' }}
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
 
           message = Path("message.html").read_text(encoding="utf-8")
+
+          subject_file = Path("email_subject.txt")
+          if subject_file.exists():
+              subject = subject_file.read_text(encoding="utf-8").strip()
+          else:
+              subject = "พบงานใหม่ Work From Home"
+
+          payload = {
+              "subject": subject,
+              "message": message
+          }
+
           Path("payload.json").write_text(
-              json.dumps({"message": message}, ensure_ascii=False),
+              json.dumps(payload, ensure_ascii=False),
               encoding="utf-8"
           )
+
+          print("Created payload.json")
+          print("Subject:", subject)
           PY
 
-          curl --fail-with-body \
+      - name: Send email through Apps Script
+        if: ${{ hashFiles('message.html') != '' }}
+        env:
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+        run: |
+          echo "Sending email through Google Apps Script..."
+
+          RESPONSE=$(curl \
+            --silent \
+            --show-error \
+            --fail-with-body \
             --location \
             --request POST \
             --header "Content-Type: application/json" \
             --data-binary "@payload.json" \
-            "$APPS_SCRIPT_URL"
+            "$APPS_SCRIPT_URL")
+
+          echo "Apps Script response:"
+          echo "$RESPONSE"
+
+          printf '%s' "$RESPONSE" > apps-script-response.json
+
+          python - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          response_text = Path(
+              "apps-script-response.json"
+          ).read_text(encoding="utf-8")
+
+          try:
+              response = json.loads(response_text)
+          except json.JSONDecodeError:
+              print("ERROR: Apps Script did not return JSON")
+              print(response_text)
+              sys.exit(1)
+
+          if response.get("ok") is not True:
+              print(
+                  "ERROR from Apps Script:",
+                  response.get("error", "Unknown error")
+              )
+              sys.exit(1)
+
+          print("Email sent successfully")
+          PY
 
       - name: Save latest job data
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.force_test != true }}
         run: |
+          if [ ! -f jobs.json ]; then
+            echo "jobs.json was not created"
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add jobs.json
-          git diff --cached --quiet || git commit -m "Update JobThai job data"
-          git push
+
+          if git diff --cached --quiet; then
+            echo "No changes to jobs.json"
+          else
+            git commit -m "Update JobThai job data"
+            git push origin main
+          fi
