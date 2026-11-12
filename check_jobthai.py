@@ -24,24 +24,23 @@ STATE_FILE = Path("jobs.json")
 MESSAGE_FILE = Path("message.html")
 SUBJECT_FILE = Path("email_subject.txt")
 
-# เวลาไทย UTC+7
 THAILAND_TIMEZONE = timezone(
     timedelta(hours=7)
 )
 
-# เก็บเฉพาะประกาศอายุไม่เกิน 7 วัน
+# เก็บประกาศอายุไม่เกิน 7 วัน
 MAX_JOB_AGE_DAYS = 7
 
-# จำนวนหน้าสูงสุดที่อนุญาตให้ตรวจ
+# ตรวจสูงสุด 100 หน้า
 MAX_PAGES = 100
 
-# หยุดเมื่อพบหน้าที่ไม่มี URL ใหม่ติดต่อกันตามจำนวนนี้
+# หยุดเมื่อไม่มี URL ประกาศใหม่ 2 หน้าติดต่อกัน
 EMPTY_PAGE_LIMIT = 2
 
-# เวลาพักระหว่างหน้า เพื่อลดการส่งคำขอถี่เกินไป
+# พักระหว่างหน้า เพื่อลดการเรียกเว็บไซต์ถี่เกินไป
 REQUEST_DELAY_SECONDS = 2
 
-# ค่าจาก GitHub Actions
+# รับค่าจาก GitHub Actions
 FORCE_TEST = (
     os.getenv("FORCE_TEST", "false")
     .strip()
@@ -55,7 +54,7 @@ FORCE_TEST = (
 # =========================================================
 
 def get_thailand_today():
-    """คืนค่าวันที่ปัจจุบันตามเวลาไทย"""
+    """คืนวันที่ปัจจุบันตามเวลาไทย UTC+7"""
 
     return datetime.now(
         THAILAND_TIMEZONE
@@ -64,7 +63,7 @@ def get_thailand_today():
 
 def convert_two_digit_year(year_number):
     """
-    แปลงปี 2 หลักของไทยเป็นปี ค.ศ.
+    แปลงปีไทยแบบ 2 หลักเป็น ค.ศ.
 
     ตัวอย่าง:
     69 -> พ.ศ. 2569 -> ค.ศ. 2026
@@ -79,7 +78,7 @@ def convert_two_digit_year(year_number):
 
 
 def parse_year(year_text):
-    """แปลงปี พ.ศ. หรือ ค.ศ. เป็นปี ค.ศ."""
+    """แปลงปี พ.ศ. หรือ ค.ศ. เป็น ค.ศ."""
 
     if not year_text:
         return None
@@ -99,12 +98,12 @@ def parse_year(year_text):
 
 def parse_thai_posted_date(text):
     """
-    อ่านวันที่ประกาศจากข้อความไทย
+    อ่านวันที่ประกาศจากข้อความภาษาไทย
 
-    รองรับ:
+    รองรับตัวอย่าง:
     - วันนี้
     - เมื่อวาน
-    - 25 นาทีที่แล้ว
+    - 30 นาทีที่แล้ว
     - 3 ชั่วโมงที่แล้ว
     - 5 วันที่แล้ว
     - 5 วันที่ผ่านมา
@@ -141,15 +140,15 @@ def parse_thai_posted_date(text):
     if recent_time_match:
         return today
 
-    day_ago_match = re.search(
+    days_ago_match = re.search(
         r"(\d+)\s*วัน"
         r"(?:ที่แล้ว|ที่ผ่านมา)",
         normalized_text,
     )
 
-    if day_ago_match:
+    if days_ago_match:
         days_ago = int(
-            day_ago_match.group(1)
+            days_ago_match.group(1)
         )
 
         return today - timedelta(
@@ -195,7 +194,7 @@ def parse_thai_posted_date(text):
         "ธันวาคม": 12,
     }
 
-    thai_date_pattern = re.search(
+    thai_date_match = re.search(
         r"(\d{1,2})\s+"
         r"(ม\.ค\.?|มกราคม|"
         r"ก\.พ\.?|กุมภาพันธ์|"
@@ -213,22 +212,20 @@ def parse_thai_posted_date(text):
         normalized_text,
     )
 
-    if thai_date_pattern:
+    if thai_date_match:
         day_number = int(
-            thai_date_pattern.group(1)
+            thai_date_match.group(1)
         )
 
         month_text = (
-            thai_date_pattern
-            .group(2)
-            .strip()
+            thai_date_match.group(2).strip()
         )
 
         month_number = thai_months.get(
             month_text
         )
 
-        year_text = thai_date_pattern.group(3)
+        year_text = thai_date_match.group(3)
 
         if year_text:
             year_number = parse_year(
@@ -244,8 +241,8 @@ def parse_thai_posted_date(text):
                 day_number,
             )
 
-            # กรณีไม่แสดงปีและวันที่อยู่ข้างหน้าเกิน 7 วัน
-            # ให้ถือว่าเป็นวันที่ของปีก่อน
+            # กรณีเว็บไม่แสดงปี และวันที่ดูเหมือนเป็นอนาคต
+            # ให้ใช้ปีที่แล้ว
             if (
                 not year_text
                 and parsed_date
@@ -263,27 +260,27 @@ def parse_thai_posted_date(text):
             return None
 
     # รูปแบบ DD/MM/YYYY หรือ DD-MM-YYYY
-    numeric_date_pattern = re.search(
+    numeric_date_match = re.search(
         r"\b(\d{1,2})[/-]"
         r"(\d{1,2})[/-]"
         r"(\d{2,4})\b",
         normalized_text,
     )
 
-    if numeric_date_pattern:
-        day_number = int(
-            numeric_date_pattern.group(1)
-        )
-
-        month_number = int(
-            numeric_date_pattern.group(2)
-        )
-
-        year_number = parse_year(
-            numeric_date_pattern.group(3)
-        )
-
+    if numeric_date_match:
         try:
+            day_number = int(
+                numeric_date_match.group(1)
+            )
+
+            month_number = int(
+                numeric_date_match.group(2)
+            )
+
+            year_number = parse_year(
+                numeric_date_match.group(3)
+            )
+
             return date(
                 year_number,
                 month_number,
@@ -294,17 +291,17 @@ def parse_thai_posted_date(text):
             return None
 
     # รูปแบบ YYYY-MM-DD
-    iso_date_pattern = re.search(
+    iso_date_match = re.search(
         r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b",
         normalized_text,
     )
 
-    if iso_date_pattern:
+    if iso_date_match:
         try:
             return date(
-                int(iso_date_pattern.group(1)),
-                int(iso_date_pattern.group(2)),
-                int(iso_date_pattern.group(3)),
+                int(iso_date_match.group(1)),
+                int(iso_date_match.group(2)),
+                int(iso_date_match.group(3)),
             )
 
         except ValueError:
@@ -326,9 +323,9 @@ def get_job_age_days(posted_date):
 
 def is_within_allowed_age(posted_date):
     """
-    อนุญาตเฉพาะงานอายุ 0-7 วัน
+    อนุญาตประกาศอายุ 0 ถึง 7 วัน
 
-    ถ้าอ่านวันที่ไม่ได้จะเก็บไว้ก่อน
+    หากไม่สามารถอ่านวันที่ได้ จะเก็บประกาศไว้ก่อน
     เพื่อป้องกันการพลาดประกาศใหม่
     """
 
@@ -339,7 +336,7 @@ def is_within_allowed_age(posted_date):
         posted_date
     )
 
-    # วันที่ในอนาคตอาจเกิดจากรูปแบบปีไม่ชัดเจน
+    # วันที่ในอนาคตอาจเกิดจากข้อมูลปีไม่ครบ
     if age_days < 0:
         return True
 
@@ -347,16 +344,16 @@ def is_within_allowed_age(posted_date):
 
 
 # =========================================================
-# URL
+# จัดการ URL
 # =========================================================
 
 def build_page_url(page_number):
     """
-    สร้าง URL /ทำงานที่บ้าน/x
+    สร้าง URL ของแต่ละหน้า
 
     ตัวอย่าง:
-    หน้า 1 = /ทำงานที่บ้าน/1
-    หน้า 2 = /ทำงานที่บ้าน/2
+    /ทำงานที่บ้าน/1
+    /ทำงานที่บ้าน/2
     """
 
     return (
@@ -366,9 +363,10 @@ def build_page_url(page_number):
 
 def normalize_url(url):
     """
-    ลบ query string และ fragment
+    ทำ URL ให้เป็นรูปแบบเดียวกัน
 
-    ใช้ URL ที่ผ่านการปรับแล้วเป็นรหัสประกาศ
+    ลบ query string และ fragment
+    เพื่อป้องกันงานเดียวกันถูกนับซ้ำ
     """
 
     parsed = urlparse(url)
@@ -393,6 +391,7 @@ def is_job_detail_url(url):
     """ตรวจว่า URL เป็นหน้ารายละเอียดงานหรือไม่"""
 
     parsed = urlparse(url)
+
     domain = parsed.netloc.lower()
     path = parsed.path.lower()
 
@@ -417,11 +416,11 @@ def is_job_detail_url(url):
 
 
 # =========================================================
-# HTTP
+# ดาวน์โหลดหน้าเว็บ
 # =========================================================
 
 def get_request_headers():
-    """คืนค่า HTTP headers"""
+    """สร้าง HTTP headers"""
 
     return {
         "User-Agent": (
@@ -463,10 +462,7 @@ def download_page(page_number, session):
     )
 
     print("HTTP status:", response.status_code)
-    print(
-        "Final URL:",
-        response.url,
-    )
+    print("Final URL:", response.url)
     print(
         "Downloaded characters:",
         len(response.text),
@@ -477,45 +473,49 @@ def download_page(page_number, session):
             "Page does not exist:",
             page_number,
         )
-
         return None
 
     response.raise_for_status()
 
     if len(response.text) < 1000:
         print(
-            "WARNING: Page contains unusually "
-            "little content:",
-            page_number,
+            "WARNING: Page contains too little content."
         )
-
         return None
 
     return response.text
 
 
 # =========================================================
-# ดึงข้อมูลงาน
+# ดึงข้อมูลประกาศ
 # =========================================================
 
-def clean_title(title):
-    """ทำความสะอาดชื่อประกาศ"""
+def clean_text(value, maximum_length=300):
+    """ทำความสะอาดข้อความ"""
 
-    if not title:
-        return "เปิดดูรายละเอียดประกาศงาน"
+    if not value:
+        return ""
 
-    cleaned_title = " ".join(
-        str(title).split()
+    cleaned_value = " ".join(
+        str(value).split()
     ).strip()
+
+    return cleaned_value[:maximum_length]
+
+
+def clean_title(title):
+    """ทำความสะอาดชื่อตำแหน่ง"""
+
+    cleaned_title = clean_text(title)
 
     if not cleaned_title:
         return "เปิดดูรายละเอียดประกาศงาน"
 
-    return cleaned_title[:300]
+    return cleaned_title
 
 
 def element_contains_date_text(text):
-    """ตรวจคร่าว ๆ ว่าข้อความมีวันที่หรือไม่"""
+    """ตรวจคร่าว ๆ ว่าข้อความอาจมีวันที่หรือไม่"""
 
     if not text:
         return False
@@ -561,9 +561,8 @@ def element_contains_date_text(text):
 
 def find_job_posted_date(anchor):
     """
-    ค้นหาวันที่จากลิงก์และกล่องประกาศรอบลิงก์
-
-    จำกัดการตรวจ parent ไว้ 6 ระดับ
+    ค้นหาวันที่ประกาศจากลิงก์
+    และกล่องประกาศรอบลิงก์
     """
 
     current_element = anchor
@@ -612,11 +611,97 @@ def find_job_posted_date(anchor):
     return None
 
 
+def is_valid_company_name(company_name, job_title):
+    """ตรวจว่าข้อความมีลักษณะเป็นชื่อบริษัทหรือไม่"""
+
+    company_name = clean_text(company_name)
+    job_title = clean_text(job_title)
+
+    if not company_name:
+        return False
+
+    if company_name == job_title:
+        return False
+
+    if len(company_name) > 200:
+        return False
+
+    rejected_texts = [
+        "ดูรายละเอียด",
+        "สมัครงาน",
+        "งานทั้งหมด",
+        "เข้าสู่ระบบ",
+        "งานแนะนำ",
+        "เงินเดือน",
+        "วันที่ประกาศ",
+        "วันนี้",
+        "เมื่อวาน",
+        "ทำงานที่บ้าน",
+        "เปิดดูรายละเอียด",
+    ]
+
+    return not any(
+        rejected_text in company_name
+        for rejected_text in rejected_texts
+    )
+
+
+def find_company_name(anchor, job_title):
+    """
+    ค้นหาชื่อบริษัทจากกล่องประกาศรอบลิงก์
+
+    ถ้าหาไม่พบจะคืนค่า "ไม่พบชื่อบริษัท"
+    """
+
+    company_selectors = [
+        "[class*='company-name']",
+        "[class*='company_name']",
+        "[class*='companyName']",
+        "[data-testid*='company']",
+        "[itemprop='hiringOrganization']",
+        "[itemprop='name']",
+        "a[href*='/company/']",
+        "a[href*='/บริษัท/']",
+    ]
+
+    current_element = anchor
+
+    for _ in range(6):
+        if current_element is None:
+            break
+
+        for selector in company_selectors:
+            try:
+                company_elements = (
+                    current_element.select(selector)
+                )
+            except Exception:
+                company_elements = []
+
+            for company_element in company_elements:
+                company_name = clean_text(
+                    company_element.get_text(
+                        " ",
+                        strip=True,
+                    )
+                )
+
+                if is_valid_company_name(
+                    company_name,
+                    job_title,
+                ):
+                    return company_name
+
+        current_element = current_element.parent
+
+    return "ไม่พบชื่อบริษัท"
+
+
 def extract_job_url_signatures(page_source):
     """
     ดึง URL ประกาศทั้งหมดก่อนกรองวันที่
 
-    ใช้ตรวจว่าหน้าถัดไปเป็นหน้าซ้ำหรือไม่
+    ใช้ตรวจว่าหน้าถัดไปมี URL ใหม่หรือไม่
     """
 
     soup = BeautifulSoup(
@@ -670,7 +755,9 @@ def extract_job_url_signatures(page_source):
 
 def extract_jobs(page_source, page_number):
     """
-    ดึงงานจากหนึ่งหน้า และตัดงานเกิน 7 วันออก
+    ดึงงานจากหนึ่งหน้า
+
+    ตัดงานอายุเกิน 7 วันออกก่อนรวมผล
     """
 
     soup = BeautifulSoup(
@@ -683,8 +770,7 @@ def extract_jobs(page_source, page_number):
     total_links = 0
     duplicate_links = 0
     expired_jobs = 0
-    unknown_date_jobs = 0
-    future_date_jobs = 0
+    unknown_dates = 0
 
     for anchor in soup.find_all(
         "a",
@@ -744,6 +830,11 @@ def extract_jobs(page_source, page_number):
 
         title = clean_title(title)
 
+        company_name = find_company_name(
+            anchor,
+            title,
+        )
+
         posted_date = find_job_posted_date(
             anchor
         )
@@ -753,25 +844,13 @@ def extract_jobs(page_source, page_number):
         )
 
         if posted_date is None:
-            unknown_date_jobs += 1
+            unknown_dates += 1
 
             print(
                 "Unknown date retained:",
                 title,
-                "| URL:",
-                full_url,
-            )
-
-        elif age_days < 0:
-            future_date_jobs += 1
-
-            print(
-                "Future date retained:",
-                title,
-                "| Posted:",
-                posted_date.isoformat(),
-                "| URL:",
-                full_url,
+                "| Company:",
+                company_name,
             )
 
         elif not is_within_allowed_age(
@@ -787,14 +866,13 @@ def extract_jobs(page_source, page_number):
                 "| Age:",
                 age_days,
                 "days",
-                "| URL:",
-                full_url,
             )
 
             continue
 
         jobs[full_url] = {
             "title": title,
+            "company": company_name,
             "url": full_url,
             "posted_date": (
                 posted_date.isoformat()
@@ -805,43 +883,24 @@ def extract_jobs(page_source, page_number):
             "source_page": page_number,
         }
 
-    print(
-        "Matching links on page:",
-        total_links,
-    )
-    print(
-        "Duplicate links on page:",
-        duplicate_links,
-    )
-    print(
-        "Old jobs removed on page:",
-        expired_jobs,
-    )
-    print(
-        "Unknown dates retained:",
-        unknown_date_jobs,
-    )
-    print(
-        "Future dates retained:",
-        future_date_jobs,
-    )
-    print(
-        "Valid jobs kept on page:",
-        len(jobs),
-    )
+    print("Matching links:", total_links)
+    print("Duplicate links:", duplicate_links)
+    print("Expired jobs removed:", expired_jobs)
+    print("Unknown dates retained:", unknown_dates)
+    print("Valid jobs on page:", len(jobs))
 
     return jobs
 
 
 def download_all_job_pages():
     """
-    ตรวจ /ทำงานที่บ้าน/1, /2, /3 ... ทุกหน้า
+    ตรวจทุกหน้า /ทำงานที่บ้าน/x
 
     หยุดเมื่อ:
-    - ไม่มี URL ใหม่ติดต่อกัน 2 หน้า
-    - หน้าเว็บตอบ 404
-    - ดาวน์โหลดไม่ได้
-    - ตรวจครบ 100 หน้า
+    - ไม่มี URL ใหม่ 2 หน้าติดต่อกัน
+    - พบ HTTP 404
+    - ดาวน์โหลดล้มเหลว
+    - ตรวจครบ MAX_PAGES
     """
 
     all_jobs = {}
@@ -869,7 +928,6 @@ def download_all_job_pages():
                     ":",
                     error,
                 )
-
                 break
 
             if page_source is None:
@@ -885,8 +943,7 @@ def download_all_job_pages():
                     >= EMPTY_PAGE_LIMIT
                 ):
                     print(
-                        "Stopping after consecutive "
-                        "unavailable pages."
+                        "Stopping after unavailable pages."
                     )
                     break
 
@@ -909,26 +966,17 @@ def download_all_job_pages():
                 "Job URLs before filtering:",
                 len(page_signatures),
             )
+
             print(
-                "New URLs on this page:",
+                "New URLs on page:",
                 len(new_signatures),
             )
 
             if not page_signatures:
                 consecutive_empty_pages += 1
 
-                print(
-                    "No job URLs found on page:",
-                    page_number,
-                )
-
             elif not new_signatures:
                 consecutive_empty_pages += 1
-
-                print(
-                    "Only duplicate URLs found on page:",
-                    page_number,
-                )
 
             else:
                 consecutive_empty_pages = 0
@@ -951,11 +999,12 @@ def download_all_job_pages():
                     added_jobs += 1
 
             print(
-                "Valid jobs added from page:",
+                "Valid jobs added:",
                 added_jobs,
             )
+
             print(
-                "Total valid jobs collected:",
+                "Total valid jobs:",
                 len(all_jobs),
             )
 
@@ -966,7 +1015,7 @@ def download_all_job_pages():
                 print(
                     "Stopping after",
                     consecutive_empty_pages,
-                    "pages without new job URLs.",
+                    "pages without new URLs.",
                 )
                 break
 
@@ -986,15 +1035,15 @@ def download_all_job_pages():
     print("=" * 60)
     print("Pages checked:", pages_checked)
     print(
-        "Pages containing new URLs:",
+        "Pages with new URLs:",
         pages_with_new_urls,
     )
     print(
-        "Unique URLs before date filtering:",
+        "Unique URLs before filtering:",
         len(all_signatures),
     )
     print(
-        "Jobs retained after 7-day filtering:",
+        "Jobs retained after filtering:",
         len(all_jobs),
     )
     print("=" * 60)
@@ -1003,11 +1052,11 @@ def download_all_job_pages():
 
 
 # =========================================================
-# jobs.json
+# จัดการ jobs.json
 # =========================================================
 
 def load_previous_jobs():
-    """อ่านงานที่บันทึกไว้ใน jobs.json"""
+    """อ่านข้อมูลเดิมจาก jobs.json"""
 
     if not STATE_FILE.exists():
         print("jobs.json does not exist.")
@@ -1020,14 +1069,10 @@ def load_previous_jobs():
         ) as file:
             data = json.load(file)
 
-    except json.JSONDecodeError as error:
-        print(
-            "WARNING: jobs.json is invalid:",
-            error,
-        )
-        return {}
-
-    except OSError as error:
+    except (
+        json.JSONDecodeError,
+        OSError,
+    ) as error:
         print(
             "WARNING: Cannot read jobs.json:",
             error,
@@ -1037,9 +1082,7 @@ def load_previous_jobs():
     converted = {}
 
     if isinstance(data, dict):
-        iterable = data.items()
-
-        for saved_url, saved_data in iterable:
+        for saved_url, saved_data in data.items():
             if isinstance(saved_data, dict):
                 job_url = saved_data.get(
                     "url",
@@ -1050,13 +1093,11 @@ def load_previous_jobs():
                     job_url
                 )
 
+                saved_data["url"] = normalized_url
+
                 converted[normalized_url] = (
                     saved_data
                 )
-
-                converted[normalized_url][
-                    "url"
-                ] = normalized_url
 
             elif isinstance(saved_url, str):
                 normalized_url = normalize_url(
@@ -1065,6 +1106,7 @@ def load_previous_jobs():
 
                 converted[normalized_url] = {
                     "title": "ประกาศงาน",
+                    "company": "ไม่พบชื่อบริษัท",
                     "url": normalized_url,
                 }
 
@@ -1077,6 +1119,7 @@ def load_previous_jobs():
 
                 converted[normalized_url] = {
                     "title": "ประกาศงาน",
+                    "company": "ไม่พบชื่อบริษัท",
                     "url": normalized_url,
                 }
 
@@ -1090,18 +1133,15 @@ def load_previous_jobs():
                     item_url
                 )
 
+                item["url"] = normalized_url
+
                 converted[normalized_url] = item
-                converted[normalized_url][
-                    "url"
-                ] = normalized_url
 
     return converted
 
 
 def save_jobs(jobs):
-    """
-    บันทึกเฉพาะงานที่ผ่านเงื่อนไขลง jobs.json
-    """
+    """บันทึกงานที่ผ่านเงื่อนไขลง jobs.json"""
 
     with STATE_FILE.open(
         "w",
@@ -1120,7 +1160,7 @@ def save_jobs(jobs):
 
 
 # =========================================================
-# อีเมล
+# สร้างอีเมล
 # =========================================================
 
 def format_posted_date(job):
@@ -1171,7 +1211,15 @@ def format_posted_date(job):
 
 
 def create_email(new_jobs, test_mode=False):
-    """สร้าง message.html และ email_subject.txt"""
+    """
+    สร้าง message.html และ email_subject.txt
+
+    รูปแบบ:
+    - ตัวอักษรทั้งหมดเป็น Regular
+    - ตำแหน่งและบริษัทอยู่บรรทัดเดียวกัน
+    - ไม่แสดง URL ยาว
+    - คลิกชื่อตำแหน่งเพื่อเปิดประกาศได้
+    """
 
     if test_mode:
         subject_text = "ทดสอบระบบ JobThai Alert"
@@ -1180,7 +1228,7 @@ def create_email(new_jobs, test_mode=False):
         intro = (
             "นี่คืออีเมลทดสอบจาก GitHub Actions "
             "ผ่าน Google Apps Script "
-            "ไม่ใช่การแจ้งประกาศใหม่"
+            "ไม่ใช่การแจ้งประกาศงานใหม่"
         )
 
         job_items = ""
@@ -1209,6 +1257,14 @@ def create_email(new_jobs, test_mode=False):
                 quote=True,
             )
 
+            safe_company = html.escape(
+                job.get(
+                    "company",
+                    "ไม่พบชื่อบริษัท",
+                ),
+                quote=True,
+            )
+
             safe_url = html.escape(
                 job.get(
                     "url",
@@ -1222,55 +1278,104 @@ def create_email(new_jobs, test_mode=False):
                 quote=True,
             )
 
-            source_page = job.get(
-                "source_page",
-                "ไม่ทราบ",
+            safe_page = html.escape(
+                str(
+                    job.get(
+                        "source_page",
+                        "ไม่ทราบ",
+                    )
+                ),
+                quote=True,
             )
 
             item_list.append(
                 f"""
-                <li style="margin-bottom:18px;">
+                <li
+                  style="
+                    margin-bottom:22px;
+                    font-family:Arial,Tahoma,sans-serif;
+                    font-size:14px;
+                    font-style:normal;
+                    font-weight:400;
+                    line-height:1.6;
+                  "
+                >
+                  <div
+                    style="
+                      color:#222222;
+                      font-size:16px;
+                      font-style:normal;
+                      font-weight:400;
+                      line-height:1.5;
+                    "
+                  >
                     <a
                       href="{safe_url}"
                       style="
-                        font-weight:bold;
                         color:#0969da;
                         text-decoration:none;
                         font-size:16px;
+                        font-style:normal;
+                        font-weight:400;
                       "
                     >
                       {safe_title}
                     </a>
 
-                    <br>
-
-                    <span style="font-size:13px;color:#333333;">
-                      {safe_date}
+                    <span
+                      style="
+                        color:#777777;
+                        font-style:normal;
+                        font-weight:400;
+                      "
+                    >
+                      &nbsp;|&nbsp;
                     </span>
-
-                    <br>
-
-                    <span style="font-size:12px;color:#666666;">
-                      พบจากหน้าที่: {source_page}
-                    </span>
-
-                    <br>
 
                     <span
                       style="
-                        font-size:12px;
-                        color:#666666;
-                        word-break:break-all;
+                        color:#222222;
+                        font-size:16px;
+                        font-style:normal;
+                        font-weight:400;
                       "
                     >
-                      {safe_url}
+                      บริษัท: {safe_company}
                     </span>
+                  </div>
+
+                  <div
+                    style="
+                      margin-top:4px;
+                      color:#333333;
+                      font-size:13px;
+                      font-style:normal;
+                      font-weight:400;
+                    "
+                  >
+                    {safe_date}
+                  </div>
+
+                  <div
+                    style="
+                      color:#666666;
+                      font-size:12px;
+                      font-style:normal;
+                      font-weight:400;
+                    "
+                  >
+                    พบจากหน้าที่: {safe_page}
+                  </div>
                 </li>
                 """
             )
 
         job_items = (
-            '<ol style="padding-left:24px;">'
+            '<ol style="'
+            'padding-left:24px;'
+            'font-style:normal;'
+            'font-weight:400;'
+            '">'
             + "".join(item_list)
             + "</ol>"
         )
@@ -1281,7 +1386,10 @@ def create_email(new_jobs, test_mode=False):
             )
 
             job_items += (
-                "<p>"
+                '<p style="'
+                'font-style:normal;'
+                'font-weight:400;'
+                '">'
                 f"ยังมีอีก {remaining} รายการ "
                 "กรุณาเปิดหน้าค้นหางาน JobThai"
                 "</p>"
@@ -1307,6 +1415,7 @@ def create_email(new_jobs, test_mode=False):
     <html lang="th">
       <head>
         <meta charset="utf-8">
+
         <meta
           name="viewport"
           content="width=device-width, initial-scale=1"
@@ -1320,6 +1429,9 @@ def create_email(new_jobs, test_mode=False):
           background:#f5f5f5;
           color:#222222;
           font-family:Arial,Tahoma,sans-serif;
+          font-size:14px;
+          font-style:normal;
+          font-weight:400;
           line-height:1.6;
         "
       >
@@ -1331,13 +1443,30 @@ def create_email(new_jobs, test_mode=False):
             background:#ffffff;
             border:1px solid #dddddd;
             border-radius:8px;
+            font-style:normal;
+            font-weight:400;
           "
         >
-          <h2 style="color:#d32f2f;margin-top:0;">
+          <h2
+            style="
+              color:#d32f2f;
+              margin-top:0;
+              font-size:20px;
+              font-style:normal;
+              font-weight:400;
+            "
+          >
             {safe_heading}
           </h2>
 
-          <p>{safe_intro}</p>
+          <p
+            style="
+              font-style:normal;
+              font-weight:400;
+            "
+          >
+            {safe_intro}
+          </p>
 
           {job_items}
 
@@ -1351,7 +1480,8 @@ def create_email(new_jobs, test_mode=False):
                 background:#d32f2f;
                 border-radius:6px;
                 text-decoration:none;
-                font-weight:bold;
+                font-style:normal;
+                font-weight:400;
               "
             >
               เปิดหน้าค้นหางาน JobThai
@@ -1366,7 +1496,14 @@ def create_email(new_jobs, test_mode=False):
             "
           >
 
-          <p style="font-size:12px;color:#666666;">
+          <p
+            style="
+              color:#666666;
+              font-size:12px;
+              font-style:normal;
+              font-weight:400;
+            "
+          >
             ตรวจทุกหน้า /ทำงานที่บ้าน/x
             และเก็บเฉพาะประกาศอายุไม่เกิน
             {MAX_JOB_AGE_DAYS} วัน ตามเวลาไทย
@@ -1421,23 +1558,24 @@ def main():
     print("JobThai Alert")
     print("=" * 60)
 
-    print(
-        "Base URL:",
-        JOBTHAI_BASE_URL,
-    )
+    print("Base URL:", JOBTHAI_BASE_URL)
+
     print(
         "Thailand date:",
         get_thailand_today().isoformat(),
     )
+
     print(
         "Maximum job age:",
         MAX_JOB_AGE_DAYS,
         "days",
     )
+
     print(
         "Maximum pages:",
         MAX_PAGES,
     )
+
     print(
         "Force test:",
         FORCE_TEST,
@@ -1445,7 +1583,8 @@ def main():
 
     remove_old_email_files()
 
-    # ทดสอบเฉพาะระบบส่งอีเมล
+    # โหมดทดสอบอีเมล
+    # ไม่ตรวจเว็บไซต์และไม่แก้ jobs.json
     if FORCE_TEST:
         create_email(
             new_jobs=[],
@@ -1456,7 +1595,6 @@ def main():
         print(
             "Test mode completed successfully."
         )
-
         return
 
     try:
@@ -1503,6 +1641,7 @@ def main():
         len(new_jobs),
     )
 
+    # ครั้งแรกสร้างฐานข้อมูลตั้งต้นก่อน
     if not previous_jobs:
         print(
             "First run: creating baseline only."
@@ -1530,6 +1669,15 @@ def main():
                     "ประกาศงาน",
                 ),
             )
+
+            print(
+                "Company:",
+                job.get(
+                    "company",
+                    "ไม่พบชื่อบริษัท",
+                ),
+            )
+
             print(
                 "Posted:",
                 job.get(
@@ -1537,6 +1685,7 @@ def main():
                     "unknown",
                 ),
             )
+
             print(
                 "Age:",
                 job.get(
@@ -1544,6 +1693,7 @@ def main():
                     "unknown",
                 ),
             )
+
             print(
                 "Source page:",
                 job.get(
@@ -1551,6 +1701,7 @@ def main():
                     "unknown",
                 ),
             )
+
             print(
                 "URL:",
                 job.get(
