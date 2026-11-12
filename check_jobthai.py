@@ -1,43 +1,141 @@
-import requests
+import html
 import json
 import os
+import re
+import sys
+from urllib.parse import urljoin
+
+import requests
 
 URL = "https://www.jobthai.com/หางาน/ทำงานที่บ้าน"
+STATE_FILE = "jobs.json"
+MESSAGE_FILE = "message.html"
 
 headers = {
-    "User-Agent": "Mozilla/5.0"
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
+    ),
+    "Accept-Language": "th-TH,th;q=0.9,en;q=0.8",
 }
 
-response = requests.get(URL, headers=headers)
-html = response.text
+# ลบข้อความอีเมลเก่าทุกครั้ง เพื่อไม่ให้ส่งซ้ำ
+if os.path.exists(MESSAGE_FILE):
+    os.remove(MESSAGE_FILE)
 
-jobs = []
+response = requests.get(
+    URL,
+    headers=headers,
+    timeout=30,
+)
 
-for line in html.splitlines():
-    if "งาน" in line:
-        jobs.append(line.strip())
+print("HTTP status:", response.status_code)
+print("Downloaded characters:", len(response.text))
 
-jobs = list(set(jobs))
+response.raise_for_status()
 
-old_jobs = []
+page = response.text
 
-if os.path.exists("jobs.json"):
-    with open("jobs.json", "r", encoding="utf-8") as f:
-        old_jobs = json.load(f)
+# หา URL ที่มีลักษณะเป็นหน้าประกาศงาน
+links = re.findall(
+    r'href=["\']([^"\']*(?:job|งาน)[^"\']*)["\']',
+    page,
+    flags=re.IGNORECASE,
+)
 
-new_jobs = [job for job in jobs if job not in old_jobs]
+ignored_parts = (
+    "/หางาน/",
+    "/search",
+    "javascript:",
+    "#",
+)
 
-if new_jobs:
+current_jobs = {}
 
-    message = "<h2>พบงานใหม่ใน JobThai</h2><ul>"
+for link in links:
+    link = html.unescape(link)
 
-    for job in new_jobs[:20]:
-        message += f"<li>{job}</li>"
+    if any(part in link for part in ignored_parts):
+        continue
 
-    message += "</ul>"
+    full_url = urljoin(URL, link)
 
-    with open("message.html", "w", encoding="utf-8") as f:
-        f.write(message)
+    # ใช้ URL เป็นรหัสประจำประกาศ
+    current_jobs[full_url] = {
+        "url": full_url
+    }
 
-with open("jobs.json", "w", encoding="utf-8") as f:
-    json.dump(jobs, f, ensure_ascii=False)
+print("Job links found:", len(current_jobs))
+
+if not current_jobs:
+    print("ERROR: ไม่พบลิงก์ประกาศงาน")
+    print("หน้า JobThai อาจเปลี่ยนรูปแบบหรือป้องกันการดึงข้อมูล")
+    sys.exit(1)
+
+old_jobs = {}
+
+if os.path.exists(STATE_FILE):
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as file:
+            saved = json.load(file)
+
+        if isinstance(saved, dict):
+            old_jobs = saved
+        elif isinstance(saved, list):
+            old_jobs = {str(item): {"url": str(item)} for item in saved}
+
+    except (json.JSONDecodeError, OSError) as error:
+        print("Cannot read previous state:", error)
+
+new_urls = [
+    job_url
+    for job_url in current_jobs
+    if job_url not in old_jobs
+]
+
+print("Previously saved:", len(old_jobs))
+print("New jobs found:", len(new_urls))
+
+# รอบแรกใช้สร้างฐานข้อมูล ไม่ส่งรายการทั้งหมดเป็นอีเมล
+if not old_jobs:
+    print("First run: creating initial job baseline only")
+
+elif new_urls:
+    items = []
+
+    for job_url in new_urls[:50]:
+        safe_url = html.escape(job_url, quote=True)
+        items.append(
+            f'<li><a href="{safe_url}">{safe_url}</a></li>'
+        )
+
+    email_body = f"""
+    <h2>พบงาน Work From Home ใหม่</h2>
+    <p>พบประกาศใหม่ {len(new_urls)} รายการ</p>
+    <ul>
+      {''.join(items)}
+    <  <p>
+      <a href="{html.escape(URL, quote=True)}">
+        เปิดหน้าค้นหางาน JobThai
+      </a>
+    </p>
+    """
+
+    with open(MESSAGE_FILE, "w", encoding="utf-8") as file:
+        file.write(email_body)
+
+    print("Created message.html")
+
+else:
+    print("No new jobs. Email will not be sent.")
+
+with open(STATE_FILE, "w", encoding="utf-8") as file:
+    json.dump(
+        current_jobs,
+        file,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
+
+print("Updated jobs.json")
